@@ -21,6 +21,12 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
+// Request Logger
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    next();
+});
+
 // MongoDB Connection
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('✅ MongoDB connected'))
@@ -136,7 +142,14 @@ const authenticateToken = (req, res, next) => {
 // Send OTP
 app.post('/api/auth/send-otp', async (req, res) => {
     try {
-        const { phone } = req.body;
+        let { phone } = req.body;
+
+        // Auto-format phone number: if 10 digits, add +91
+        if (phone && phone.length === 10 && !phone.startsWith('+')) {
+            phone = `+91${phone}`;
+            console.log(`📱 Auto-formatted phone: ${phone}`);
+        }
+
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
         otpStore.set(phone, otp);
@@ -151,7 +164,8 @@ app.post('/api/auth/send-otp', async (req, res) => {
                 });
                 console.log(`✅ OTP sent via Twilio to ${phone}`);
             } catch (twilioError) {
-                console.log(`📱 TEST MODE - OTP for ${phone}: ${otp}`);
+                console.log(`⚠️ Twilio error, using TEST MODE - OTP for ${phone}: ${otp}`);
+                console.error('Twilio error:', twilioError.message);
             }
         } else {
             console.log(`📱 TEST MODE - OTP for ${phone}: ${otp}`);
@@ -167,7 +181,14 @@ app.post('/api/auth/send-otp', async (req, res) => {
 // Verify OTP
 app.post('/api/auth/verify-otp', async (req, res) => {
     try {
-        const { phone, otp } = req.body;
+        let { phone, otp } = req.body;
+
+        // Auto-format phone number: if 10 digits, add +91
+        if (phone && phone.length === 10 && !phone.startsWith('+')) {
+            phone = `+91${phone}`;
+            console.log(`📱 Auto-formatted phone: ${phone}`);
+        }
+
         console.log(`🔍 Verifying OTP for ${phone}, received: ${otp}`);
         const storedOTP = otpStore.get(phone);
         console.log(`🔍 Stored OTP: ${storedOTP}`);
@@ -225,6 +246,45 @@ app.post('/api/auth/login', async (req, res) => {
 
 // ==================== USER ROUTES ====================
 
+// Get nearby users (flexible for both /nearby and /by-category)
+const getNearbyUsersHandler = async (req, res) => {
+    try {
+        const { lat, lng, category } = req.query;
+        const requestedCategory = req.params.category || category;
+
+        const query = requestedCategory && requestedCategory !== 'global' ? { category: requestedCategory } : {};
+
+        let users = await User.find(query).limit(50);
+
+        // MVP Demo logic: If users have no coordinates, assign them random ones around a default center
+        // so they are visible on the map
+        const defaultLat = parseFloat(lat) || 28.6139; // Delhi center
+        const defaultLng = parseFloat(lng) || 77.2090;
+
+        const usersWithLocation = users.map(user => {
+            const userObj = user.toObject();
+            if (!userObj.location || !userObj.location.coordinates || userObj.location.coordinates.length < 2) {
+                userObj.location = {
+                    type: 'Point',
+                    coordinates: [
+                        defaultLng + (Math.random() - 0.5) * 0.1,
+                        defaultLat + (Math.random() - 0.5) * 0.1
+                    ]
+                };
+            }
+            return userObj;
+        });
+
+        res.json({ users: usersWithLocation });
+    } catch (error) {
+        console.error('Fetch users error:', error);
+        res.status(500).json({ error: 'Failed to fetch users' });
+    }
+};
+
+app.get('/api/users/nearby', authenticateToken, getNearbyUsersHandler);
+app.get('/api/users/by-category/:category', authenticateToken, getNearbyUsersHandler);
+
 // Get user profile
 app.get('/api/users/:id', authenticateToken, async (req, res) => {
     try {
@@ -258,18 +318,9 @@ app.post('/api/users/:id/follow', authenticateToken, async (req, res) => {
     }
 });
 
-// Get nearby users
-app.get('/api/users/nearby', authenticateToken, async (req, res) => {
-    try {
-        const { lat, lng, category } = req.query;
-        const query = category && category !== 'global' ? { category } : {};
+// End of user routes
 
-        const users = await User.find(query).limit(50);
-        res.json({ users });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch users' });
-    }
-});
+
 
 // ==================== POST ROUTES ====================
 
