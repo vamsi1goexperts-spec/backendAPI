@@ -1040,6 +1040,44 @@ app.get('/api/chats', authenticateToken, async (req, res) => {
     }
 });
 
+// Get specific chat messages
+app.get('/api/chats/:chatId', authenticateToken, async (req, res) => {
+    try {
+        const { chatId } = req.params;
+        const currentUserId = req.user.userId || req.user._id;
+
+        console.log(`🔍 Fetching chat: ${chatId} for user: ${currentUserId}`);
+
+        if (!mongoose.Types.ObjectId.isValid(chatId)) {
+            console.log(`⚠️ Invalid Chat ID format: ${chatId}`);
+            return res.status(400).json({ error: 'Invalid Chat ID format' });
+        }
+
+        const chat = await Chat.findOne({
+            _id: chatId,
+            participants: currentUserId
+        }).populate('participants', 'name profilePicture');
+
+        if (!chat) {
+            console.log(`❌ Chat not found or user not participant. ID: ${chatId}, User: ${currentUserId}`);
+            return res.status(404).json({ error: 'Chat not found' });
+        }
+
+        const chatObj = chat.toObject();
+        if (chatObj.participants) {
+            chatObj.participants = chatObj.participants.map(p => ({
+                ...p,
+                profilePicture: signS3Url(p.profilePicture)
+            }));
+        }
+
+        res.json({ chat: chatObj });
+    } catch (error) {
+        console.error('❌ Failed to fetch chat messages:', error);
+        res.status(500).json({ error: 'Failed to fetch chat messages', details: error.message });
+    }
+});
+
 // Create chat
 app.post('/api/chats', authenticateToken, async (req, res) => {
     try {
