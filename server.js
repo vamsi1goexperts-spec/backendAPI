@@ -1081,10 +1081,42 @@ app.get('/api/chats/:chatId', authenticateToken, async (req, res) => {
 // Create chat
 app.post('/api/chats', authenticateToken, async (req, res) => {
     try {
+        const { type, participants } = req.body;
+        const currentUserId = req.user.userId;
+
+        // Normalize participants: ensure current user is included and unique
+        let allParticipants = [currentUserId];
+        if (participants && Array.isArray(participants)) {
+            allParticipants = [...new Set([...allParticipants, ...participants])];
+        }
+
+        // For private chats (type 'chat'), check if one already exists
+        if (type === 'chat' && allParticipants.length === 2) {
+            const existingChat = await Chat.findOne({
+                type: 'chat',
+                participants: { $all: allParticipants, $size: 2 }
+            }).populate('participants', 'name profilePicture');
+
+            if (existingChat) {
+                console.log(`♻️ Returning existing chat: ${existingChat._id}`);
+                const chatObj = existingChat.toObject();
+                if (chatObj.participants) {
+                    chatObj.participants = chatObj.participants.map(p => ({
+                        ...p,
+                        profilePicture: signS3Url(p.profilePicture)
+                    }));
+                }
+                return res.json(chatObj);
+            }
+        }
+
+        // Create new chat
         const chat = await Chat.create({
             ...req.body,
-            participants: [req.user.userId, ...req.body.participants]
+            participants: allParticipants
         });
+
+        console.log(`🆕 Created new chat: ${chat._id}`);
         res.json(chat);
     } catch (error) {
         console.error('❌ Failed to create chat:', error);
