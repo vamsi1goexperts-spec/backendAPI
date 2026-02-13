@@ -2,7 +2,7 @@
   "name": "infliq-backend",
   "version": "1.0.0",
   "description": "INFLIQ Backend Microservices",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:auth\" \"npm run dev:user\" \"npm run dev:post\" \"npm run dev:feed\" \"npm run dev:chat\" \"npm run dev:media\"",
     "dev:auth": "cd services/auth-service && nodemon index.js",
@@ -11,7 +11,7 @@
     "dev:feed": "cd services/feed-service && nodemon index.js",
     "dev:chat": "cd services/chat-service && nodemon index.js",
     "dev:media": "cd services/media-service && nodemon index.js",
-    "start": "node services/auth-service/index.js"
+    "start": "node server.js"
   },
   "keywords": [
     "infliq",
