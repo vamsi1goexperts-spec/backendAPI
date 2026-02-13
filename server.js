@@ -62,22 +62,50 @@ const s3 = new AWS.S3({
 const upload = multer({ storage: multer.memoryStorage() });
 
 // S3 Signing Utility
+// S3 Signing Utility
 const signS3Url = (url) => {
-    if (!url || !url.includes('amazonaws.com')) return url;
-    try {
-        // Strip existing query params if any (in case it was already signed)
-        const baseUrl = url.split('?')[0];
-        const key = baseUrl.split('.com/')[1];
+    if (!url) return url;
 
+    try {
+        let key = url;
+
+        // If it's a full URL
+        if (url.startsWith('http')) {
+            // Case 1: Local fallback or non-S3 URL
+            if (!url.includes('amazonaws.com')) return url;
+
+            // Case 2: Full S3 URL (extract key)
+            const baseUrl = url.split('?')[0];
+            key = baseUrl.split('.com/')[1];
+        }
+
+        // Now we have the key (either extracted or it was already a key)
         if (!key) return url;
 
         return s3.getSignedUrl('getObject', {
             Bucket: process.env.S3_BUCKET,
             Key: key,
-            Expires: 60 * 60 * 24 // 24 hours
+            Expires: 60 * 60 * 24 * 7 // 7 days
         });
     } catch (err) {
         console.error('Error signing S3 URL:', err);
+        return url;
+    }
+};
+
+// S3 Sanitizer - Extracts the key from a full S3 URL or signed URL for storage
+const sanitizeS3Url = (url) => {
+    if (!url) return url;
+    // If it's not an S3 URL, return as is (e.g. local fallback)
+    if (!url.includes('amazonaws.com')) return url;
+
+    try {
+        const baseUrl = url.split('?')[0];
+        // Extracts whatever is after .com/
+        const key = baseUrl.split('.com/')[1];
+        return key || url;
+    } catch (err) {
+        console.error('Error sanitizing S3 URL:', err);
         return url;
     }
 };
@@ -520,7 +548,12 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
 
         res.json(userObj);
     } catch (error) {
-        res.status(500).json({ error: 'Failed to update user' });
+        console.error('❌ Profile Update Error:', error);
+        res.status(500).json({
+            error: 'Failed to update user',
+            details: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 });
 
@@ -548,19 +581,33 @@ app.post('/api/posts', authenticateToken, async (req, res) => {
             req.body.mediaUrl = sanitizeS3Url(req.body.mediaUrl);
         }
         const post = await Post.create({ ...req.body, userId: req.user.userId });
-        res.json(post);
+
+        const postObj = post.toObject();
+        postObj.mediaUrl = signS3Url(postObj.mediaUrl);
+
+        res.json(postObj);
     } catch (error) {
-        res.status(500).json({ error: 'Failed to create post' });
+        console.error('❌ Create Post Error:', error);
+        res.status(500).json({
+            error: 'Failed to create post',
+            details: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 });
 
 // Get feed
 app.get('/api/posts/feed', authenticateToken, async (req, res) => {
     try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
         const posts = await Post.find()
             .populate('userId', 'name profilePicture')
             .sort({ createdAt: -1 })
-            .limit(20);
+            .skip(skip)
+            .limit(limit);
 
         const processedPosts = posts.map(post => {
             const postObj = post.toObject();
@@ -571,7 +618,11 @@ app.get('/api/posts/feed', authenticateToken, async (req, res) => {
             return postObj;
         });
 
-        res.json({ posts: processedPosts });
+        res.json({
+            posts: processedPosts,
+            page,
+            hasMore: posts.length === limit
+        });
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch feed' });
     }
@@ -580,10 +631,15 @@ app.get('/api/posts/feed', authenticateToken, async (req, res) => {
 // Get reels feed
 app.get('/api/reels/feed', authenticateToken, async (req, res) => {
     try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
         const reels = await Post.find({ type: 'reel' })
             .populate('userId', 'name profilePicture')
             .sort({ createdAt: -1 })
-            .limit(20);
+            .skip(skip)
+            .limit(limit);
 
         const processedReels = reels.map(reel => {
             const reelObj = reel.toObject();
@@ -594,7 +650,11 @@ app.get('/api/reels/feed', authenticateToken, async (req, res) => {
             return reelObj;
         });
 
-        res.json({ reels: processedReels });
+        res.json({
+            reels: processedReels,
+            page,
+            hasMore: reels.length === limit
+        });
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch reels' });
     }
@@ -630,7 +690,12 @@ app.post('/api/posts/:id/like', authenticateToken, async (req, res) => {
             { $addToSet: { likes: req.user.userId } },
             { new: true }
         );
-        res.json(post);
+        if (!post) return res.status(404).json({ error: 'Post not found' });
+
+        const postObj = post.toObject();
+        postObj.mediaUrl = signS3Url(postObj.mediaUrl);
+
+        res.json(postObj);
     } catch (error) {
         res.status(500).json({ error: 'Failed to like post' });
     }
@@ -644,7 +709,12 @@ app.post('/api/posts/:id/comment', authenticateToken, async (req, res) => {
             { $push: { comments: { userId: req.user.userId, text: req.body.text } } },
             { new: true }
         );
-        res.json(post);
+        if (!post) return res.status(404).json({ error: 'Post not found' });
+
+        const postObj = post.toObject();
+        postObj.mediaUrl = signS3Url(postObj.mediaUrl);
+
+        res.json(postObj);
     } catch (error) {
         res.status(500).json({ error: 'Failed to add comment' });
     }
