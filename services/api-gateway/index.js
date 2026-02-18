@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const compression = require('compression');
 const { applyCommonSecurity } = require('../_shared/security');
 const { requiredInProduction } = require('../_shared/config');
 const { applyRequestContext } = require('../_shared/observability');
@@ -31,6 +32,7 @@ const targets = {
     media: process.env.MEDIA_SERVICE_URL || 'http://localhost:3008'
 };
 
+app.use(compression());
 applyCommonSecurity(app);
 applyRequestContext(app);
 

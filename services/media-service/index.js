@@ -12,6 +12,7 @@ const { requiredInProduction, isProduction, strictProductionMode } = require('..
 const { applyCommonSecurity } = require('../_shared/security');
 const { applyRequestContext } = require('../_shared/observability');
 const { sendError, ErrorCodes } = require('../_shared/http');
+const sharp = require('sharp');
 
 const app = express();
 const PORT = process.env.MEDIA_SERVICE_URL?.split(':')[2] || 3008;
@@ -198,6 +199,21 @@ const validateFileIntegrity = (file) => {
 const resolveAllowedFolder = (folder) => {
     const normalized = (folder || 'general').toString().trim().toLowerCase();
     return ALLOWED_FOLDERS.includes(normalized) ? normalized : null;
+};
+
+const optimizeImage = async (buffer) => {
+    try {
+        return await sharp(buffer)
+            .resize(1200, 1200, {
+                fit: 'inside',
+                withoutEnlargement: true
+            })
+            .jpeg({ quality: 80, progressive: true })
+            .toBuffer();
+    } catch (error) {
+        console.error('Image optimization error:', error);
+        return buffer; // Fallback to raw buffer
+    }
 };
 
 const canAccessUserKey = (key, userId) => {
@@ -450,6 +466,16 @@ app.post('/api/media/upload', authMiddleware, upload.single('file'), async (req,
         const timestamp = Date.now();
         const filename = `${folder}/${req.userId}/${timestamp}-${safeName}`;
 
+        let finalBuffer = req.file.buffer;
+        let finalMimeType = req.file.mimetype;
+
+        // Image Optimization
+        if (req.file.mimetype.startsWith('image/') && req.file.mimetype !== 'image/gif') {
+            logEvent('info', 'optimizing_image', { originalSize: req.file.size });
+            finalBuffer = await optimizeImage(req.file.buffer);
+            logEvent('info', 'image_optimized', { newSize: finalBuffer.length });
+        }
+
         let thumbnailUrl = null;
 
         // If video, generate thumbnail
@@ -502,8 +528,8 @@ app.post('/api/media/upload', authMiddleware, upload.single('file'), async (req,
         const params = {
             Bucket: process.env.S3_BUCKET,
             Key: filename,
-            Body: req.file.buffer,
-            ContentType: req.file.mimetype,
+            Body: finalBuffer,
+            ContentType: finalMimeType,
             ACL: 'public-read'
         };
 
@@ -623,10 +649,15 @@ app.post('/api/media/upload-multiple', authMiddleware, upload.array('files', MAX
             const safeName = `${baseName}.${integrity.expectedExt}`;
             const filename = `${folder}/${req.userId}/${timestamp}-${safeName}`;
 
+            let finalBuffer = file.buffer;
+            if (file.mimetype.startsWith('image/') && file.mimetype !== 'image/gif') {
+                finalBuffer = await optimizeImage(file.buffer);
+            }
+
             const params = {
                 Bucket: process.env.S3_BUCKET,
                 Key: filename,
-                Body: file.buffer,
+                Body: finalBuffer,
                 ContentType: file.mimetype,
                 ACL: 'public-read'
             };
