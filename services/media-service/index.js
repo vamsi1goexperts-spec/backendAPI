@@ -668,7 +668,9 @@ app.post('/api/media/upload-multiple', authMiddleware, upload.array('files', MAX
         const results = await Promise.all(uploadPromises);
 
         const urls = results.map(result => ({
-            url: result.Location,
+            url: CLOUDFRONT_DOMAIN
+                ? `https://${CLOUDFRONT_DOMAIN}/${result.Key}`
+                : result.Location,
             key: result.Key
         }));
 
@@ -774,7 +776,9 @@ app.get('/api/media/list', authMiddleware, async (req, res) => {
                 key: item.Key,
                 size: item.Size,
                 lastModified: item.LastModified,
-                url: `https://${process.env.S3_BUCKET}.s3.${awsRegion}.amazonaws.com/${item.Key}`
+                url: CLOUDFRONT_DOMAIN
+                    ? `https://${CLOUDFRONT_DOMAIN}/${item.Key}`
+                    : `https://${process.env.S3_BUCKET}.s3.${awsRegion}.amazonaws.com/${item.Key}`
             }));
         } else {
             const aggregated = [];
@@ -790,7 +794,9 @@ app.get('/api/media/list', authMiddleware, async (req, res) => {
                 key: item.Key,
                 size: item.Size,
                 lastModified: item.LastModified,
-                url: `https://${process.env.S3_BUCKET}.s3.${awsRegion}.amazonaws.com/${item.Key}`
+                url: CLOUDFRONT_DOMAIN
+                    ? `https://${CLOUDFRONT_DOMAIN}/${item.Key}`
+                    : `https://${process.env.S3_BUCKET}.s3.${awsRegion}.amazonaws.com/${item.Key}`
             }));
         }
 

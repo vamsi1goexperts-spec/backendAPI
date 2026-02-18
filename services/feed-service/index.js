@@ -19,7 +19,8 @@ const allowedStoryHosts = (
     process.env.STORY_MEDIA_ALLOWED_HOSTS ||
     [
         process.env.S3_BUCKET ? `${process.env.S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com` : '',
-        process.env.S3_BUCKET ? `${process.env.S3_BUCKET}.s3.amazonaws.com` : ''
+        process.env.S3_BUCKET ? `${process.env.S3_BUCKET}.s3.amazonaws.com` : '',
+        process.env.CLOUDFRONT_DOMAIN || ''
     ].filter(Boolean).join(',')
 )
     .split(',')
