@@ -137,10 +137,33 @@ io.on('connection', (socket) => {
 
 app.get('/api/chats', authMiddleware, async (req, res) => {
     try {
-        const chats = await Chat.find({ participants: req.userId })
+        const userId = new mongoose.Types.ObjectId(req.userId);
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
+
+        const chats = await Chat.find({ participants: userId })
             .populate('participants', 'name profilePicture')
-            .sort({ lastMessageAt: -1 });
-        res.json({ chats });
+            .sort({ lastMessageAt: -1 })
+            .skip(skip)
+            .limit(limit);
+
+        const total = await Chat.countDocuments({ participants: userId });
+
+        // Double check participant inclusion (security)
+        const filteredChats = chats.filter(chat =>
+            chat.participants.some(p => p._id.toString() === req.userId.toString())
+        );
+
+        res.json({
+            chats: filteredChats,
+            pagination: {
+                total,
+                page,
+                limit,
+                hasMore: total > skip + chats.length
+            }
+        });
     } catch (error) {
         logEvent('chat-service', 'error', 'chats.list_failed', { requestId: req.requestId, error: error.message, userId: req.userId });
         return sendError(res, 500, ErrorCodes.INTERNAL_ERROR, 'Failed to get chats');
@@ -150,17 +173,51 @@ app.get('/api/chats', authMiddleware, async (req, res) => {
 app.get('/api/chats/:chatId', authMiddleware, async (req, res) => {
     try {
         const { chatId } = req.params;
+        const limit = parseInt(req.query.limit) || 50;
+        const before = req.query.before; // ISO timestamp for cursor-based message pagination
+
         if (!mongoose.Types.ObjectId.isValid(chatId)) {
             return sendError(res, 400, ErrorCodes.BAD_REQUEST, 'Invalid Chat ID format');
         }
 
-        const chat = await Chat.findOne({
-            _id: chatId,
-            participants: req.userId
-        }).populate('participants', 'name profilePicture');
+        // For large message histories, we should slice the messages array
+        // However, standard Mongoose .find() returns the whole doc.
+        // We use aggregation or projection with $slice if the messages array is huge.
 
-        if (!chat) return sendError(res, 404, ErrorCodes.NOT_FOUND, 'Chat not found');
-        res.json({ chat });
+        let query = { _id: chatId, participants: req.userId };
+
+        // Find the chat first to get basic info
+        const chatDoc = await Chat.findOne(query)
+            .populate('participants', 'name profilePicture');
+
+        if (!chatDoc) return sendError(res, 404, ErrorCodes.NOT_FOUND, 'Chat not found');
+
+        // Manual slicing for now as the messages are embedded. 
+        // In a more mature system, messages should be a separate collection.
+        let allMessages = chatDoc.messages || [];
+
+        // If 'before' is provided, filter messages older than that timestamp
+        if (before) {
+            const beforeDate = new Date(before);
+            allMessages = allMessages.filter(msg => new Date(msg.createdAt) < beforeDate);
+        }
+
+        // Sort by createdAt descending to get newest first, then slice for limit
+        allMessages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+        const slicedMessages = allMessages.slice(0, limit);
+        const hasMore = allMessages.length > limit;
+
+        // Return messages in ascending order for the UI
+        const finalMessages = slicedMessages.reverse();
+
+        res.json({
+            chat: {
+                ...chatDoc.toObject(),
+                messages: finalMessages,
+                hasMore
+            }
+        });
     } catch (error) {
         logEvent('chat-service', 'error', 'chats.get_failed', { requestId: req.requestId, error: error.message, userId: req.userId });
         return sendError(res, 500, ErrorCodes.INTERNAL_ERROR, 'Failed to fetch chat messages');
@@ -172,21 +229,34 @@ app.post('/api/chats', authMiddleware, async (req, res) => {
         const { type, participants } = req.body;
         const currentUserId = req.userId;
 
-        let allParticipants = [currentUserId];
-        if (participants && Array.isArray(participants)) {
-            allParticipants = [...new Set([...allParticipants, ...participants])];
+        // Ensure participants is an array and does not include the current user yet
+        let otherParticipants = Array.isArray(participants) ? participants : [];
+
+        // Remove current user if already in array to avoid duplicates
+        otherParticipants = otherParticipants.filter(p => p !== currentUserId);
+
+        // Final participants list including current user
+        let allParticipants = [currentUserId, ...new Set(otherParticipants)];
+
+        // Strict 1-on-1 chat enforcement
+        const chatType = type || 'chat';
+        if (chatType === 'chat') {
+            if (allParticipants.length !== 2) {
+                return sendError(res, 400, ErrorCodes.BAD_REQUEST, 'Individual chats must have exactly 2 participants');
+            }
         }
 
-        if (type === 'chat' && allParticipants.length === 2) {
+        if (chatType === 'chat') {
             const existingChat = await Chat.findOne({
                 type: 'chat',
                 participants: { $all: allParticipants, $size: 2 }
             }).populate('participants', 'name profilePicture');
+
             if (existingChat) return res.json(existingChat);
         }
 
         const chat = await Chat.create({
-            type: type || 'chat',
+            type: chatType,
             participants: allParticipants,
             messages: [],
             lastMessageAt: new Date()
