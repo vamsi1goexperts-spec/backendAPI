@@ -182,7 +182,9 @@ app.post('/api/auth/send-otp', async (req, res) => {
             return sendError(res, 429, ErrorCodes.RATE_LIMITED, 'Too many OTP requests. Please try again later.');
         }
 
-        const otp = generateOTP();
+        // Static OTP for test number
+        const STATIC_OTP_PHONE = '7032345527';
+        const otp = phone === STATIC_OTP_PHONE ? '123456' : generateOTP();
 
         await setOtp(phone, otp);
 

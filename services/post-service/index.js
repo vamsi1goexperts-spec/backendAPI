@@ -178,7 +178,7 @@ app.get('/api/posts/feed', authMiddleware, async (req, res) => {
         const limit = parseInt(req.query.limit || '10', 10);
         const skip = (page - 1) * limit;
 
-        const posts = await Post.find({ type: 'post' })
+        const posts = await Post.find({})
             .sort({ createdAt: -1 })
             .limit(limit)
             .skip(skip)

@@ -70,8 +70,7 @@ app.get('/api/feed', authMiddleware, async (req, res) => {
 
         // Get posts from followed users + own posts
         const posts = await Post.find({
-            userId: { $in: [...user.following, req.userId] },
-            type: 'post'
+            userId: { $in: [...user.following, req.userId] }
         })
             .sort({ createdAt: -1 })
             .limit(parseInt(limit))
