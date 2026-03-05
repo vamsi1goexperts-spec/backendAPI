@@ -323,7 +323,9 @@ app.post('/api/auth/send-otp', async (req, res) => {
             console.log(`📱 Auto-formatted phone: ${phone}`);
         }
 
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        // Static OTP for test number
+        const STATIC_OTP_PHONES = ['7032345527', '+917032345527'];
+        const otp = STATIC_OTP_PHONES.includes(phone) ? '123456' : Math.floor(100000 + Math.random() * 900000).toString();
 
         otpStore.set(phone, otp);
         setTimeout(() => otpStore.delete(phone), 300000); // 5 min expiry
